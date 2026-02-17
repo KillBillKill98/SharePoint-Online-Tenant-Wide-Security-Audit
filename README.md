@@ -79,6 +79,3 @@ The tool generates:
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
 
----
-
-If you want, I can also make it more “enterprise polished” with badges, contribution guidelines, security disclosure policy, and version tagging structure.
