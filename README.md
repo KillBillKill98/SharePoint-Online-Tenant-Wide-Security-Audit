@@ -63,11 +63,7 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 Connect-SPOService -Url "https://yourtenant-admin.sharepoint.com"
 
 # Step 4 - Run the audit
-.\scripts\SPO-TenantSecurityAudit.ps1 `
-    -TenantName "yourtenant" `
-    -ClientName "Client-Name" `
-    -AdminUPN "admin@yourtenant.com" `
-    -AuditDays 30
+.\scripts\SPO-TenantSecurityAudit.ps1 -TenantName "yourtenant" -ClientName "Client-Name" -AdminUPN "admin@yourtenant.com" -AuditDays 30
 ```
 
 ### Parameters
