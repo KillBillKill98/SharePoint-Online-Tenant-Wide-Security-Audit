@@ -9,9 +9,9 @@ to keep all client report folders organized in one place.
 
 ```powershell
 .\scripts\SPO-TenantSecurityAudit.ps1 `
-    -TenantName "safousa" `
-    -ClientName "SAFO-LLC" `
-    -AdminUPN   "admin@safousa.com" `
+    -TenantName "contoso" `
+    -ClientName "Contoso-LLC" `
+    -AdminUPN   "admin@contoso.com" `
     -OutputPath ".\reports"
 ```
 
