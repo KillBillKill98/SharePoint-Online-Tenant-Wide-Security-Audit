@@ -2,9 +2,6 @@
 
 **SharePoint Online Tenant-Wide Security Audit Toolkit**
 
-> By **Luis Z Guzman Garcia (KillBillKill98)**
-> GitHub: [https://github.com/KillBillKill98](https://github.com/KillBillKill98)
-
 ---
 
 ## Overview
