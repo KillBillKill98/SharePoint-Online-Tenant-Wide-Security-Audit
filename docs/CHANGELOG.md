@@ -8,7 +8,7 @@ All notable changes to SPO-TenantSecurityAudit are documented here.
 
 ### Added
 - `-ClientName` parameter — output folder now named after the client
-  (e.g., `SAFO-LLC_SPO_Audit_20260217_150000`)
+  (e.g., `contoso-llc_SPO_Audit_20260217_150000`)
 - **Section 8: Virus / Malware Protection** — audits `DisallowInfectedFileDownload`
   setting which is disabled by default on all tenants and almost universally overlooked
 - **Section 9: Oversharing / Microsoft Copilot Risk Assessment** — dedicated section
