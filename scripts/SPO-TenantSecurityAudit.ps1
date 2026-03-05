@@ -548,7 +548,7 @@ function Get-DeepPermissions {
                             FindingType   = "Everyone Account in Group"
                             ListUrl       = "N/A"
                             ItemCount     = "N/A"
-                            Note          = "Member: $($m.Title) | $($m.LoginName) - REVIEW REQUIRED"
+                            Note          = ("Member: " + $m.Title + " | " + $m.LoginName + " - REVIEW REQUIRED")
                         })
                     }
                 }
@@ -876,7 +876,7 @@ function Get-RiskFindings {
             Add-Finding "External Sharing" "High" `
                 "Tenant allows anonymous Anyone links" `
                 "SharingCapability = ExternalUserAndGuestSharing" `
-                "Set to New and existing guests or lower in SPO Admin > Policies > Sharing"
+                'Set to New and existing guests or lower in SPO Admin > Policies > Sharing'
         }
         elseif ($sc -eq "ExternalUserSharingOnly") {
             Add-Finding "External Sharing" "Medium" `
@@ -889,21 +889,21 @@ function Get-RiskFindings {
             Add-Finding "Authentication" "High" `
                 "Legacy authentication protocols are enabled" `
                 "LegacyAuthProtocolsEnabled = True" `
-                "Disable legacy auth in SPO Admin > Access Control"
+                'Disable legacy auth in SPO Admin > Access Control'
         }
 
         if ($TenantSettings.EmailAttestationRequired -eq $false) {
             Add-Finding "Guest Access" "Medium" `
                 "Email attestation not required for anonymous link recipients" `
                 "EmailAttestationRequired = False" `
-                "Enable in SPO Admin > Sharing settings"
+                'Enable in SPO Admin > Sharing settings'
         }
 
         if ($TenantSettings.ExternalUserExpirationRequired -eq $false) {
             Add-Finding "Guest Access" "Medium" `
                 "No expiration set for external/guest users" `
                 "ExternalUserExpirationRequired = False" `
-                "Enable guest expiration in SPO Admin > Sharing"
+                'Enable guest expiration in SPO Admin > Sharing'
         }
 
         if ($TenantSettings.PreventExternalUsersFromResharing -eq $false) {
@@ -955,7 +955,7 @@ function Get-RiskFindings {
             Add-Finding "Site Permissions" "High" `
                 "$($anonSites.Count) of $($Sites.Count) sites allow anonymous Anyone sharing" `
                 "These sites permit unauthenticated access and are a critical Copilot oversharing risk" `
-                "Review each site in SPO Admin > Sites > Active Sites and restrict sharing"
+                'Review each site in SPO Admin > Sites > Active Sites and restrict sharing'
         }
     }
 
