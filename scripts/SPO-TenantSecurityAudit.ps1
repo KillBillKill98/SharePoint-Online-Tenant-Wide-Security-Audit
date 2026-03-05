@@ -45,17 +45,28 @@
 .PARAMETER SkipPnP
     Skip the PnP deep permission scan (faster).
 
-.EXAMPLE
-    # Step 1 - pre-connect:
-    Connect-SPOService -Url "https://contoso-admin.sharepoint.com"
+.PARAMETER Environment
+    Microsoft 365 environment to connect to.
+    Values: "Commercial" (default), "GCC", "GCCHigh"
+    If omitted, an interactive menu will prompt you to choose at startup.
+    GCC High uses separate endpoints required for IL4/IL5 and CMMC Level 2/3 compliance.
 
-    # Step 2 - run:
+.EXAMPLE
+    # Commercial tenant (interactive menu will appear if -Environment is omitted):
     .\SPO-TenantSecurityAudit.ps1 -TenantName "contoso" -ClientName "Contoso-LLC" -AdminUPN "admin@contoso.com"
+
+.EXAMPLE
+    # GCC High tenant (non-interactive):
+    .\SPO-TenantSecurityAudit.ps1 -TenantName "contoso" -ClientName "Contoso-LLC" -AdminUPN "admin@contoso.us" -Environment GCCHigh
+
+.EXAMPLE
+    # GCC tenant (non-interactive):
+    .\SPO-TenantSecurityAudit.ps1 -TenantName "contoso" -ClientName "Contoso-LLC" -AdminUPN "admin@contoso.com" -Environment GCC
 
 .NOTES
     Author  : Luis Z Guzman Garcia (KillBillKill98)
     GitHub  : https://github.com/KillBillKill98
-    Version : 2.0
+    Version : 3.0
 
     Run in Windows PowerShell 5.1 as Administrator.
     If blocked by execution policy run first:
@@ -63,6 +74,12 @@
         Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
     Requires : Microsoft.Online.SharePoint.PowerShell, ExchangeOnlineManagement
     Optional : PnP.PowerShell v1.x (for Section 5 deep scan)
+
+    GCC High Endpoint Reference:
+      SharePoint Admin : https://{tenant}-admin.sharepoint.us
+      Exchange Online  : ExchangeEnvironmentName = O365USGovGCCHigh
+      IPPS             : https://ps.compliance.protection.office365.us/powershell-liveid/
+      PnP AzureEnv     : USGovernmentHigh
 #>
 
 [CmdletBinding()]
@@ -86,7 +103,11 @@ param(
     [switch]$SkipAuditLog,
 
     [Parameter(Mandatory = $false)]
-    [switch]$SkipPnP
+    [switch]$SkipPnP,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("Commercial","GCC","GCCHigh")]
+    [string]$Environment = ""
 )
 
 # ============================================================
@@ -95,11 +116,17 @@ param(
 
 $ScriptAuthor           = "Luis Z Guzman Garcia (KillBillKill98)"
 $ScriptGitHub           = "https://github.com/KillBillKill98"
-$ScriptVersion          = "2.0"
+$ScriptVersion          = "3.0"
 $Timestamp              = Get-Date -Format "yyyyMMdd_HHmmss"
 $SafeClientName         = $ClientName -replace '[^a-zA-Z0-9_\-]', '_'
 $ReportFolder           = Join-Path $OutputPath "${SafeClientName}_SPO_Audit_$Timestamp"
-$AdminUrl               = "https://$TenantName-admin.sharepoint.com"
+$script:AdminUrl        = ""
+$script:ExoEnvironment  = $null
+$script:IPPSUri         = $null
+$script:IPPSAuthUri     = $null
+$script:PnPAzureEnv     = "Production"
+$script:EnvAuthUrl      = $null
+$script:EnvironmentLabel= "Commercial (Worldwide)"
 $script:PnPCreds        = $null
 $script:SkipAuditLogInt = $false
 $script:FilesGenerated  = New-Object System.Collections.ArrayList
@@ -163,6 +190,73 @@ function Get-RiskLevel {
         "ExistingExternalUserSharingOnly" { "Low"    }
         "Disabled"                        { "Good"   }
         default                           { "Info"   }
+    }
+}
+
+# ============================================================
+# ENVIRONMENT SELECTION MENU
+# ============================================================
+
+function Show-EnvironmentMenu {
+    Write-Host ""
+    Write-Host "========================================================" -ForegroundColor Magenta
+    Write-Host "  SELECT MICROSOFT 365 ENVIRONMENT"                       -ForegroundColor Magenta
+    Write-Host "========================================================" -ForegroundColor Magenta
+    Write-Host "  [1] Commercial       - Microsoft 365 Worldwide"         -ForegroundColor White
+    Write-Host "  [2] GCC              - US Government Community Cloud"   -ForegroundColor Cyan
+    Write-Host "  [3] GCC High         - US Gov High / IL4/IL5 (CMMC)"   -ForegroundColor Yellow
+    Write-Host "========================================================" -ForegroundColor Magenta
+    Write-Host ""
+
+    do {
+        $choice = Read-Host "  Enter selection [1-3]"
+        switch ($choice) {
+            "1" { return "Commercial" }
+            "2" { return "GCC" }
+            "3" {
+                Write-Host ""
+                Write-Host "  NOTE: GCC High requires connecting to *.sharepoint.us endpoints." -ForegroundColor Yellow
+                Write-Host "  Ensure your ExchangeOnlineManagement module supports O365USGovGCCHigh." -ForegroundColor Yellow
+                Write-Host ""
+                return "GCCHigh"
+            }
+            default {
+                Write-Host "  Invalid selection. Please enter 1, 2, or 3." -ForegroundColor Red
+            }
+        }
+    } while ($true)
+}
+
+function Set-EnvironmentConfig {
+    param([string]$Env)
+    switch ($Env) {
+        "GCCHigh" {
+            $script:AdminUrl         = "https://$TenantName-admin.sharepoint.us"
+            $script:ExoEnvironment   = "O365USGovGCCHigh"
+            $script:IPPSUri          = "https://ps.compliance.protection.office365.us/powershell-liveid/"
+            $script:IPPSAuthUri      = "https://login.microsoftonline.us/organizations"
+            $script:PnPAzureEnv      = "USGovernmentHigh"
+            $script:EnvAuthUrl       = "https://login.microsoftonline.us/organizations"
+            $script:EnvironmentLabel = "GCC High (IL4/IL5 - CMMC)"
+        }
+        "GCC" {
+            $script:AdminUrl         = "https://$TenantName-admin.sharepoint.com"
+            $script:ExoEnvironment   = $null
+            $script:IPPSUri          = $null
+            $script:IPPSAuthUri      = $null
+            $script:PnPAzureEnv      = "USGovernment"
+            $script:EnvAuthUrl       = $null
+            $script:EnvironmentLabel = "GCC (US Government Community Cloud)"
+        }
+        default {
+            $script:AdminUrl         = "https://$TenantName-admin.sharepoint.com"
+            $script:ExoEnvironment   = $null
+            $script:IPPSUri          = $null
+            $script:IPPSAuthUri      = $null
+            $script:PnPAzureEnv      = "Production"
+            $script:EnvAuthUrl       = $null
+            $script:EnvironmentLabel = "Commercial (Worldwide)"
+        }
     }
 }
 
@@ -393,6 +487,7 @@ function Get-DeepPermissions {
     $testSite = $filteredSites | Select-Object -First 1
     try {
         Connect-PnPOnline -Url $testSite.Url -Credentials $script:PnPCreds `
+            -AzureEnvironment $script:PnPAzureEnv `
             -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
         Write-AuditLog "PnP credentials verified. Starting silent scan..." "SUCCESS"
     }
@@ -418,6 +513,7 @@ function Get-DeepPermissions {
         try {
             # Silently reconnect per site - suppress ALL output to prevent empty prompts
             Connect-PnPOnline -Url $site.Url -Credentials $script:PnPCreds `
+                -AzureEnvironment $script:PnPAzureEnv `
                 -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
 
             # Lists and libraries with broken permission inheritance
@@ -488,8 +584,10 @@ function Get-AuditLogEvents {
             $exoVer = if ($exoMod) { $exoMod.Version.Major } else { 0 }
             try {
                 if ($exoVer -ge 2) {
-                    if ($AdminUPN) { Connect-ExchangeOnline -UserPrincipalName $AdminUPN -ShowBanner:$false -ErrorAction Stop }
-                    else           { Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop }
+                    $reconnParams = @{ ShowBanner = $false; ErrorAction = 'Stop' }
+                    if ($AdminUPN)              { $reconnParams.UserPrincipalName      = $AdminUPN }
+                    if ($script:ExoEnvironment) { $reconnParams.ExchangeEnvironmentName = $script:ExoEnvironment }
+                    Connect-ExchangeOnline @reconnParams
                 }
                 else {
                     if ($AdminUPN) { Connect-EXOPSSession -UserPrincipalName $AdminUPN -ErrorAction Stop }
@@ -498,8 +596,10 @@ function Get-AuditLogEvents {
             }
             catch {
                 if ($exoVer -ge 2) {
-                    if ($AdminUPN) { Connect-ExchangeOnline -UserPrincipalName $AdminUPN -ErrorAction Stop }
-                    else           { Connect-ExchangeOnline -ErrorAction Stop }
+                    $reconnParams = @{ ErrorAction = 'Stop' }
+                    if ($AdminUPN)              { $reconnParams.UserPrincipalName      = $AdminUPN }
+                    if ($script:ExoEnvironment) { $reconnParams.ExchangeEnvironmentName = $script:ExoEnvironment }
+                    Connect-ExchangeOnline @reconnParams
                 }
             }
         }
@@ -755,7 +855,8 @@ function Get-RiskFindings {
         [object[]]$Sites,
         [object[]]$ExternalUsers,
         [object[]]$SiteAdmins,
-        [object]$VirusProtection
+        [object]$VirusProtection,
+        [string]$EnvLabel = ""
     )
     Write-AuditLog "=== SECTION 10: Risk Findings Summary ===" "INFO"
 
@@ -884,6 +985,67 @@ function Get-RiskFindings {
                 "Guest accounts should never hold administrative roles" `
                 "Remove these accounts from site admin roles immediately"
         }
+    }
+
+    # CMMC-specific findings for GCC High tenants
+    if ($script:EnvironmentLabel -match "GCC High") {
+        Write-AuditLog "Adding CMMC control mappings for GCC High environment..." "INFO"
+
+        if ($TenantSettings) {
+            $sc = $TenantSettings.SharingCapability.ToString()
+            if ($sc -ne "Disabled") {
+                Add-Finding "CMMC - AC.1.001" "High" `
+                    "External sharing enabled - may violate CMMC AC.1.001 (Limit system access to authorized users)" `
+                    "SharingCapability = $sc. CMMC requires limiting CUI access to authorized users only." `
+                    "Set SharingCapability to Disabled or ExistingExternalUserSharingOnly and document exceptions"
+            }
+            else {
+                Add-Finding "CMMC - AC.1.001" "Good" `
+                    "External sharing disabled - satisfies CMMC AC.1.001 (Limit system access to authorized users)" `
+                    "SharingCapability = Disabled" `
+                    "No action required. Maintain this configuration."
+            }
+
+            if ($TenantSettings.ExternalUserExpirationRequired -eq $false) {
+                Add-Finding "CMMC - AC.2.006" "Medium" `
+                    "No guest expiration - review against CMMC AC.2.006 (Limit use of portable storage devices)" `
+                    "ExternalUserExpirationRequired = False. Persistent guest accounts increase CUI exposure." `
+                    "Enable ExternalUserExpirationRequired and set ExternalUserExpireInDays to 30 or fewer"
+            }
+
+            if ($TenantSettings.ConditionalAccessPolicy -eq "AllowFullAccess") {
+                Add-Finding "CMMC - SI.1.210" "High" `
+                    "No device-based conditional access - may not satisfy CMMC SI.1.210 (Identify and manage information system flaws)" `
+                    "ConditionalAccessPolicy = AllowFullAccess. Unmanaged devices can access CUI." `
+                    "Apply LimitedAccess or BlockAccess for unmanaged devices via Entra ID Conditional Access"
+            }
+            else {
+                Add-Finding "CMMC - SI.1.210" "Good" `
+                    "Conditional access policy restricts unmanaged device access - supports CMMC SI.1.210" `
+                    "ConditionalAccessPolicy = $($TenantSettings.ConditionalAccessPolicy)" `
+                    "Verify policy also applies to all CUI-containing site collections."
+            }
+        }
+
+        if ($VirusProtection) {
+            if ($VirusProtection.DisallowInfectedFileDownload -eq $false) {
+                Add-Finding "CMMC - SC.3.177" "High" `
+                    "Malware protection disabled - fails CMMC SC.3.177 (Employ cryptographic mechanisms to protect CUI)" `
+                    "DisallowInfectedFileDownload = False. Infected files are not blocked." `
+                    "Run: Set-SPOTenant -DisallowInfectedFileDownload `$true"
+            }
+            else {
+                Add-Finding "CMMC - SC.3.177" "Good" `
+                    "Built-in malware protection active - supports CMMC SC.3.177 malware protection controls" `
+                    "DisallowInfectedFileDownload = True" `
+                    "No action required."
+            }
+        }
+
+        Add-Finding "CMMC - AU.2.041" "Info" `
+            "Verify Unified Audit Log retention meets CMMC AU.2.041 (Create and retain system audit logs)" `
+            "CMMC requires audit logs to be retained for a minimum period (typically 90 days online, 1 year archived)." `
+            "In Microsoft Purview Compliance Portal, configure Audit Log retention policies to meet your CMMC assessment requirements"
     }
 
     Export-AuditData -Data $findings -FileName "10_RiskFindings" -Description "Risk findings"
@@ -1019,6 +1181,41 @@ function New-HtmlReport {
     $genDate  = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $genShort = Get-Date -Format "yyyy-MM-dd HH:mm"
 
+    # CMMC section for GCC High
+    $cmmcSection = ""
+    if ($script:EnvironmentLabel -match "GCC High") {
+        $cmmcFindings = if ($Findings) { $Findings | Where-Object { $_.Category -match "^CMMC" } } else { @() }
+        $cmmcRows = ($cmmcFindings | ForEach-Object {
+            $bg = switch ($_.RiskLevel) {
+                "High"   { "#fff0f0" } "Medium" { "#fff8e1" }
+                "Good"   { "#f0fff4" } default  { "#f0f8ff" }
+            }
+            $badge = switch ($_.RiskLevel) {
+                "High"   { "<span style='background:#FF4444;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:bold'>HIGH</span>" }
+                "Medium" { "<span style='background:#FFA500;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:bold'>MEDIUM</span>" }
+                "Good"   { "<span style='background:#00C851;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:bold'>GOOD</span>" }
+                default  { "<span style='background:#33B5E5;color:white;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:bold'>INFO</span>" }
+            }
+            "<tr style='background:$bg'><td>$($_.Category)</td><td>$badge</td><td><strong>$($_.Finding)</strong><br><small style='color:#666'>$($_.Detail)</small></td><td><em>$($_.Remediation)</em></td></tr>"
+        }) -join ""
+
+        $cmmcSection = @"
+  <!-- CMMC Compliance Findings -->
+  <section style="border-left:4px solid #7B2D8B;">
+    <h2 style="color:#7B2D8B;">CMMC Control Mapping (GCC High / IL4-IL5)</h2>
+    <div style="background:#f9f0ff;border-left:4px solid #7B2D8B;padding:12px 16px;margin-bottom:16px;font-size:13px;border-radius:4px;line-height:1.6;">
+      <strong>Cybersecurity Maturity Model Certification (CMMC)</strong> — This section maps SharePoint Online
+      security findings to relevant CMMC practice IDs for GCC High tenants handling Controlled Unclassified Information (CUI).
+      Findings are derived from the same audit data collected above and are provided for assessment planning purposes.
+    </div>
+    <table>
+      <thead><tr><th>CMMC Practice</th><th>Status</th><th>Finding</th><th>Remediation</th></tr></thead>
+      <tbody>$cmmcRows</tbody>
+    </table>
+  </section>
+"@
+    }
+
     $html = @"
 <!DOCTYPE html>
 <html lang="en">
@@ -1062,7 +1259,7 @@ function New-HtmlReport {
 
 <div class="header">
   <h1>SharePoint Online Security Audit</h1>
-  <p>Client: <strong>$ClientName</strong> | Tenant: <strong>$TenantName</strong> | Generated: $genDate | Audit period: Last $AuditDays days</p>
+  <p>Client: <strong>$ClientName</strong> | Tenant: <strong>$TenantName</strong> | Environment: <strong>$($script:EnvironmentLabel)</strong> | Generated: $genDate | Audit period: Last $AuditDays days</p>
 </div>
 
 <div class="container">
@@ -1138,6 +1335,7 @@ function New-HtmlReport {
     </table>
   </section>
 
+$cmmcSection
   <!-- Files Generated -->
   <section>
     <h2>Files Generated This Run</h2>
@@ -1173,6 +1371,15 @@ function New-HtmlReport {
 # ============================================================
 
 function Main {
+    # Environment selection - show menu if not specified via parameter
+    if (-not $Environment) {
+        $script:SelectedEnv = Show-EnvironmentMenu
+    }
+    else {
+        $script:SelectedEnv = $Environment
+    }
+    Set-EnvironmentConfig -Env $script:SelectedEnv
+
     Write-Host ""
     Write-Host "========================================================" -ForegroundColor Cyan
     Write-Host "  SharePoint Online Tenant-Wide Security Audit"           -ForegroundColor Cyan
@@ -1180,10 +1387,11 @@ function Main {
     Write-Host "  $ScriptGitHub"                                          -ForegroundColor Cyan
     Write-Host "  Version $ScriptVersion"                                 -ForegroundColor Cyan
     Write-Host "--------------------------------------------------------" -ForegroundColor Cyan
-    Write-Host "  Client  : $ClientName"                                  -ForegroundColor Cyan
-    Write-Host "  Tenant  : $TenantName"                                  -ForegroundColor Cyan
+    Write-Host "  Client      : $ClientName"                              -ForegroundColor Cyan
+    Write-Host "  Tenant      : $TenantName"                              -ForegroundColor Cyan
+    Write-Host "  Environment : $($script:EnvironmentLabel)"              -ForegroundColor Cyan
     if ($AdminUPN) {
-        Write-Host "  Admin   : $AdminUPN"                                -ForegroundColor Cyan
+        Write-Host "  Admin       : $AdminUPN"                            -ForegroundColor Cyan
     }
     Write-Host "========================================================" -ForegroundColor Cyan
     Write-Host ""
@@ -1191,19 +1399,25 @@ function Main {
     Initialize-OutputFolder
 
     # SPO Connection check
-    Write-AuditLog "Checking SharePoint Online connection..." "INFO"
+    Write-AuditLog "Checking SharePoint Online connection ($($script:AdminUrl))..." "INFO"
     try {
         Get-SPOTenant -ErrorAction Stop | Out-Null
         Write-AuditLog "Already connected to SPO." "SUCCESS"
     }
     catch {
         try {
-            Connect-SPOService -Url $AdminUrl -ModernAuth $true -ErrorAction Stop
+            if ($script:EnvAuthUrl) {
+                Connect-SPOService -Url $script:AdminUrl -ModernAuth $true `
+                    -AuthenticationUrl $script:EnvAuthUrl -ErrorAction Stop
+            }
+            else {
+                Connect-SPOService -Url $script:AdminUrl -ModernAuth $true -ErrorAction Stop
+            }
             Write-AuditLog "Connected to SPO." "SUCCESS"
         }
         catch {
             Write-AuditLog "SPO connection failed: $_" "ERROR"
-            Write-AuditLog "Pre-connect first: Connect-SPOService -Url '$AdminUrl'" "WARN"
+            Write-AuditLog "Pre-connect first: Connect-SPOService -Url '$($script:AdminUrl)'" "WARN"
             return
         }
     }
@@ -1223,21 +1437,17 @@ function Main {
                 # v2 / v3 - use Connect-ExchangeOnline
                 Write-AuditLog "Using Connect-ExchangeOnline (module v2+)..." "INFO"
                 try {
-                    if ($AdminUPN) {
-                        Connect-ExchangeOnline -UserPrincipalName $AdminUPN -ShowBanner:$false -ErrorAction Stop
-                    }
-                    else {
-                        Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
-                    }
+                    $exoParams = @{ ShowBanner = $false; ErrorAction = 'Stop' }
+                    if ($AdminUPN)              { $exoParams.UserPrincipalName       = $AdminUPN }
+                    if ($script:ExoEnvironment) { $exoParams.ExchangeEnvironmentName = $script:ExoEnvironment }
+                    Connect-ExchangeOnline @exoParams
                 }
                 catch {
                     # Some v2 builds don't support -ShowBanner
-                    if ($AdminUPN) {
-                        Connect-ExchangeOnline -UserPrincipalName $AdminUPN -ErrorAction Stop
-                    }
-                    else {
-                        Connect-ExchangeOnline -ErrorAction Stop
-                    }
+                    $exoParams = @{ ErrorAction = 'Stop' }
+                    if ($AdminUPN)              { $exoParams.UserPrincipalName       = $AdminUPN }
+                    if ($script:ExoEnvironment) { $exoParams.ExchangeEnvironmentName = $script:ExoEnvironment }
+                    Connect-ExchangeOnline @exoParams
                 }
             }
             else {
@@ -1256,23 +1466,11 @@ function Main {
             # IPPS / Security & Compliance - needed for Search-UnifiedAuditLog
             Write-AuditLog "Connecting to Security and Compliance Center..." "INFO"
             try {
-                if ($exoVersion -ge 2) {
-                    if ($AdminUPN) {
-                        Connect-IPPSSession -UserPrincipalName $AdminUPN -ErrorAction Stop
-                    }
-                    else {
-                        Connect-IPPSSession -ErrorAction Stop
-                    }
-                }
-                else {
-                    # v1 legacy
-                    if ($AdminUPN) {
-                        Connect-IPPSSession -UserPrincipalName $AdminUPN -ErrorAction Stop
-                    }
-                    else {
-                        Connect-IPPSSession -ErrorAction Stop
-                    }
-                }
+                $ippsParams = @{ ErrorAction = 'Stop' }
+                if ($AdminUPN)           { $ippsParams.UserPrincipalName                 = $AdminUPN }
+                if ($script:IPPSUri)     { $ippsParams.ConnectionUri                     = $script:IPPSUri }
+                if ($script:IPPSAuthUri) { $ippsParams.AzureADAuthorizationEndpointUri   = $script:IPPSAuthUri }
+                Connect-IPPSSession @ippsParams
                 Write-AuditLog "Security and Compliance connected." "SUCCESS"
             }
             catch {
@@ -1320,7 +1518,8 @@ function Main {
         -Sites           $sites `
         -ExternalUsers   $externalUsers `
         -SiteAdmins      $siteAdmins `
-        -VirusProtection $virusProtection
+        -VirusProtection $virusProtection `
+        -EnvLabel        $script:EnvironmentLabel
 
     New-HtmlReport `
         -TenantSettings  $tenantSettings `
@@ -1334,8 +1533,9 @@ function Main {
     Write-Host ""
     Write-Host "========================================================" -ForegroundColor Green
     Write-Host "  AUDIT COMPLETE"                                          -ForegroundColor Green
-    Write-Host "  Client  : $ClientName"                                   -ForegroundColor Green
-    Write-Host "  Output  : $ReportFolder"                                 -ForegroundColor Green
+    Write-Host "  Client      : $ClientName"                               -ForegroundColor Green
+    Write-Host "  Environment : $($script:EnvironmentLabel)"               -ForegroundColor Green
+    Write-Host "  Output      : $ReportFolder"                             -ForegroundColor Green
     Write-Host "========================================================" -ForegroundColor Green
 
     $high = if ($findings) { ($findings | Where-Object { $_.RiskLevel -eq "High"   }).Count } else { 0 }
