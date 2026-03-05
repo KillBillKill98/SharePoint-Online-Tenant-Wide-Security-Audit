@@ -73,6 +73,7 @@ Connect-SPOService -Url "https://yourtenant-admin.sharepoint.com"
 | `-TenantName` | Yes | SharePoint tenant slug (e.g., `safousa`) |
 | `-ClientName` | Yes | Client name used for output folder naming |
 | `-AdminUPN` | Recommended | Admin UPN for Exchange/audit log connections |
+| `-Environment` | No | `Commercial` (default), `GCC`, or `GCCHigh` — if omitted, interactive menu appears |
 | `-OutputPath` | No | Custom output folder (defaults to current directory) |
 | `-AuditDays` | No | Audit log lookback in days (default: 30) |
 | `-SkipAuditLog` | No | Skip Unified Audit Log search (faster) |
@@ -100,6 +101,66 @@ Client-Name_SPO_Audit_20260217_150000/
 ├── 09_OversharingCopilotRisk.csv
 └── 10_RiskFindings.csv
 ```
+
+---
+
+---
+
+## GCC High & CMMC Support
+
+This tool supports Microsoft 365 Government environments including GCC High tenants that
+handle Controlled Unclassified Information (CUI) under CMMC Level 2/3 requirements.
+
+### Environment Endpoint Reference
+
+| Environment | SharePoint Admin URL | Exchange Online | IPPS | PnP AzureEnvironment |
+|---|---|---|---|---|
+| **Commercial** | `{tenant}-admin.sharepoint.com` | Default | Default | `Production` |
+| **GCC** | `{tenant}-admin.sharepoint.com` | Default | Default | `USGovernment` |
+| **GCC High** | `{tenant}-admin.sharepoint.us` | `O365USGovGCCHigh` | `ps.compliance.protection.office365.us` | `USGovernmentHigh` |
+
+### Interactive Menu
+
+When you run the script **without** `-Environment`, an interactive menu appears:
+
+```
+========================================================
+  SELECT MICROSOFT 365 ENVIRONMENT
+========================================================
+  [1] Commercial       - Microsoft 365 Worldwide
+  [2] GCC              - US Government Community Cloud
+  [3] GCC High         - US Gov High / IL4/IL5 (CMMC)
+========================================================
+```
+
+### GCC High Quick Start
+
+```powershell
+# Pre-connect to GCC High SharePoint
+Connect-SPOService -Url "https://yourtenant-admin.sharepoint.us" `
+    -ModernAuth $true -AuthenticationUrl "https://login.microsoftonline.us/organizations"
+
+# Run the audit (non-interactive)
+.\scripts\SPO-TenantSecurityAudit.ps1 `
+    -TenantName "yourtenant" `
+    -ClientName "Agency-Name" `
+    -AdminUPN   "admin@yourtenant.us" `
+    -Environment GCCHigh `
+    -AuditDays 30
+```
+
+### CMMC Control Mappings (GCC High only)
+
+When running in GCC High mode, the tool appends CMMC practice findings to Section 10
+and generates a dedicated CMMC section in the HTML report:
+
+| CMMC Practice | Control Area | What Is Checked |
+|---|---|---|
+| AC.1.001 | Access Control | External sharing capability (CUI access restriction) |
+| AC.2.006 | Access Control | Guest expiration policy |
+| SI.1.210 | System Integrity | Conditional access / unmanaged device policy |
+| SC.3.177 | System & Communications | Built-in malware/virus protection |
+| AU.2.041 | Audit & Accountability | Audit log retention guidance |
 
 ---
 

@@ -44,21 +44,49 @@ Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 
 ### 3. Pre-Connect to SharePoint Online
 
+**Commercial / GCC:**
 ```powershell
 Connect-SPOService -Url "https://YOURTENANT-admin.sharepoint.com"
+```
+
+**GCC High:**
+```powershell
+Connect-SPOService -Url "https://YOURTENANT-admin.sharepoint.us" `
+    -ModernAuth $true -AuthenticationUrl "https://login.microsoftonline.us/organizations"
 ```
 
 Wait for the browser login prompt to complete before proceeding.
 
 ### 4. Run the Audit
 
-**Standard run (recommended):**
+**Standard run — interactive environment menu (recommended):**
 ```powershell
 .\scripts\SPO-TenantSecurityAudit.ps1 `
     -TenantName "safousa" `
     -ClientName "SAFO-LLC" `
     -AdminUPN   "admin@safousa.com" `
     -AuditDays  30
+```
+The script will display a menu to choose Commercial, GCC, or GCC High.
+
+**Commercial — non-interactive:**
+```powershell
+.\scripts\SPO-TenantSecurityAudit.ps1 `
+    -TenantName  "safousa" `
+    -ClientName  "SAFO-LLC" `
+    -AdminUPN    "admin@safousa.com" `
+    -Environment Commercial `
+    -AuditDays   30
+```
+
+**GCC High — non-interactive:**
+```powershell
+.\scripts\SPO-TenantSecurityAudit.ps1 `
+    -TenantName  "agencyname" `
+    -ClientName  "Agency-Name" `
+    -AdminUPN    "admin@agencyname.us" `
+    -Environment GCCHigh `
+    -AuditDays   30
 ```
 
 **Fast run (skip PnP deep scan, skip audit log):**
@@ -81,6 +109,7 @@ Wait for the browser login prompt to complete before proceeding.
 | `-TenantName` | YES | — | SharePoint tenant slug (e.g., `safousa`) |
 | `-ClientName` | YES | — | Client name for output folder (e.g., `SAFO-LLC`) |
 | `-AdminUPN` | Recommended | `""` | Admin UPN for Exchange/IPPS connections |
+| `-Environment` | No | `""` (menu) | `Commercial`, `GCC`, or `GCCHigh`. If omitted, an interactive menu appears |
 | `-OutputPath` | No | Current dir | Where to save the output folder |
 | `-AuditDays` | No | `30` | Days to look back in the Unified Audit Log |
 | `-SkipAuditLog` | No | `$false` | Skip Unified Audit Log search |
@@ -149,6 +178,40 @@ Organizations deploying Copilot should resolve oversharing findings **before rol
 
 ---
 
+## GCC High & CMMC Environment
+
+### Environment Endpoint Reference
+
+| Environment | SharePoint Admin URL | EXO ExchangeEnvironmentName | IPPS ConnectionUri | PnP AzureEnvironment |
+|---|---|---|---|---|
+| **Commercial** | `{tenant}-admin.sharepoint.com` | (default) | (default) | `Production` |
+| **GCC** | `{tenant}-admin.sharepoint.com` | (default) | (default) | `USGovernment` |
+| **GCC High** | `{tenant}-admin.sharepoint.us` | `O365USGovGCCHigh` | `https://ps.compliance.protection.office365.us/powershell-liveid/` | `USGovernmentHigh` |
+
+### CMMC Control Findings (GCC High only)
+
+When you select GCC High, the script appends additional CMMC-mapped findings to `10_RiskFindings.csv`
+and the HTML report includes a dedicated **CMMC Control Mapping** section:
+
+| CMMC Practice | Area | What Is Evaluated |
+|---|---|---|
+| AC.1.001 | Access Control | External sharing enabled — limits CUI access to authorized users |
+| AC.2.006 | Access Control | Guest expiration policy for persistent external accounts |
+| SI.1.210 | System Integrity | Conditional access policy for unmanaged devices |
+| SC.3.177 | System & Comms Protection | Built-in SharePoint malware/virus protection |
+| AU.2.041 | Audit & Accountability | Audit log retention guidance (90-day minimum) |
+
+### Notes for GCC High Administrators
+
+- The `ExchangeOnlineManagement` module must support `O365USGovGCCHigh`. Ensure it is up to date:
+  ```powershell
+  Update-Module ExchangeOnlineManagement -Force
+  ```
+- UPN domains for GCC High tenants typically end in `.us` (e.g., `admin@agency.us`)
+- The script automatically sets all connection endpoints — no manual endpoint configuration is required
+
+---
+
 ## Troubleshooting
 
 | Error | Cause | Fix |
@@ -160,3 +223,4 @@ Organizations deploying Copilot should resolve oversharing findings **before rol
 | `PnP module version conflict` | Wrong PnP version installed | `Install-Module PnP.PowerShell -RequiredVersion 1.12.0 -Force` |
 | `Graph.Authentication locked` | Files locked by OneDrive sync | Close OneDrive, delete the 2.28.0 folder, reopen |
 | Module stored in OneDrive path | File locking issues | Move modules to `C:\Program Files\PowerShell\Modules` |
+| GCC High connection fails | Wrong endpoint or module version | Pre-connect with `.sharepoint.us` URL and update `ExchangeOnlineManagement` module |

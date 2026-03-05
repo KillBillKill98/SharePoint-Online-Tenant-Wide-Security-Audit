@@ -4,6 +4,41 @@ All notable changes to SPO-TenantSecurityAudit are documented here.
 
 ---
 
+## [3.0] - 2026-03-05
+
+### Added
+- **Interactive environment selection menu** — prompts user to choose Commercial, GCC,
+  or GCC High at startup (can be skipped using the new `-Environment` parameter)
+- **`-Environment` parameter** — accepts `"Commercial"`, `"GCC"`, or `"GCCHigh"` for
+  non-interactive/scripted use
+- **GCC High (IL4/IL5) full endpoint support** across all connection commands:
+  - SharePoint: `https://{tenant}-admin.sharepoint.us`
+  - Exchange Online: `-ExchangeEnvironmentName O365USGovGCCHigh`
+  - IPPS/Security & Compliance: dedicated `.office365.us` URI
+  - PnP: `-AzureEnvironment USGovernmentHigh`
+- **GCC endpoint support**: PnP connections now use `-AzureEnvironment USGovernment`
+  for GCC tenants; SharePoint/EXO/IPPS use same endpoints as Commercial
+- **CMMC control mappings** in Section 10 for GCC High tenants — findings mapped to:
+  - `AC.1.001` — Limit system access to authorized users (external sharing)
+  - `AC.2.006` — Guest expiration policy
+  - `SI.1.210` — Conditional access / device compliance
+  - `SC.3.177` — Malware protection controls
+  - `AU.2.041` — Audit log retention requirements
+- **CMMC section in HTML report** — dedicated purple-accented table for GCC High runs
+- **Environment shown in startup banner, completion banner, and HTML report header**
+- GCC High module warning displayed when user selects GCC High in the menu
+
+### Changed
+- Script version bumped to `3.0`
+- `Connect-SPOService` now passes `-AuthenticationUrl` for GCC High environments
+- All Exchange Online connection calls use splatting (`@exoParams`) for cleaner
+  environment-conditional parameter injection
+- All IPPS connection calls use splatting (`@ippsParams`) with conditional URI injection
+- Banner labels updated: `Client :` → `Client :` / `Admin :` → `Admin :` with consistent
+  `Environment :` line added below tenant info
+
+---
+
 ## [2.0] - 2026-02-17
 
 ### Added
