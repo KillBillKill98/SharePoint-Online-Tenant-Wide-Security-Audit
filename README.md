@@ -59,10 +59,8 @@ Unblock-File -Path ".\scripts\SPO-TenantSecurityAudit.ps1"
 # Step 2 - Set execution policy for current session
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 
-# Step 3 - Pre-connect to SharePoint Online
-Connect-SPOService -Url "https://yourtenant-admin.sharepoint.com"
-
-# Step 4 - Run the audit
+# Step 3 - Run the audit
+# The script handles all authentication automatically — browser windows open for login
 .\scripts\SPO-TenantSecurityAudit.ps1 -TenantName "yourtenant" -ClientName "Client-Name" -AdminUPN "admin@yourtenant.com" -AuditDays 30
 ```
 
@@ -136,11 +134,7 @@ When you run the script **without** `-Environment`, an interactive menu appears:
 ### GCC High Quick Start
 
 ```powershell
-# Pre-connect to GCC High SharePoint
-Connect-SPOService -Url "https://yourtenant-admin.sharepoint.us" `
-    -ModernAuth $true -AuthenticationUrl "https://login.microsoftonline.us/organizations"
-
-# Run the audit (non-interactive)
+# Run the audit (non-interactive) — connections are handled automatically
 .\scripts\SPO-TenantSecurityAudit.ps1 `
     -TenantName "yourtenant" `
     -ClientName "Agency-Name" `

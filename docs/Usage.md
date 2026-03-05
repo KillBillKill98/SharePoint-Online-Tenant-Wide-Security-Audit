@@ -42,22 +42,11 @@ Unblock-File -Path ".\scripts\SPO-TenantSecurityAudit.ps1"
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 ```
 
-### 3. Pre-Connect to SharePoint Online
+### 3. Run the Audit
 
-**Commercial / GCC:**
-```powershell
-Connect-SPOService -Url "https://YOURTENANT-admin.sharepoint.com"
-```
-
-**GCC High:**
-```powershell
-Connect-SPOService -Url "https://YOURTENANT-admin.sharepoint.us" `
-    -ModernAuth $true -AuthenticationUrl "https://login.microsoftonline.us/organizations"
-```
-
-Wait for the browser login prompt to complete before proceeding.
-
-### 4. Run the Audit
+> The script manages all connections automatically. When the script starts, browser windows
+> will open for SharePoint Online, Exchange Online, and Security & Compliance authentication.
+> MFA is supported for all connections including the PnP deep scan.
 
 **Standard run — interactive environment menu (recommended):**
 ```powershell
@@ -221,6 +210,7 @@ and the HTML report includes a dedicated **CMMC Control Mapping** section:
 | `Search-UnifiedAuditLog not recognized` | IPPS connected but Exchange not | Use `-AdminUPN` parameter |
 | `AADSTS700016` browser error | App not registered in tenant | Ignore if Exchange still connects — it uses a different app |
 | `PnP module version conflict` | Wrong PnP version installed | `Install-Module PnP.PowerShell -RequiredVersion 1.12.0 -Force` |
+| PnP browser login fails (Section 5) | MFA prompt not completed or no site access | Section 5 uses `-UseWebLogin` (MFA supported); complete the browser login and verify you have access to the site |
 | `Graph.Authentication locked` | Files locked by OneDrive sync | Close OneDrive, delete the 2.28.0 folder, reopen |
 | Module stored in OneDrive path | File locking issues | Move modules to `C:\Program Files\PowerShell\Modules` |
-| GCC High connection fails | Wrong endpoint or module version | Pre-connect with `.sharepoint.us` URL and update `ExchangeOnlineManagement` module |
+| GCC High connection fails | Wrong endpoint or module version | The script sets all endpoints automatically; ensure `ExchangeOnlineManagement` is up to date |

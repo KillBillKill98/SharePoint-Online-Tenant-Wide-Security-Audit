@@ -127,7 +127,6 @@ $script:IPPSAuthUri     = $null
 $script:PnPAzureEnv     = "Production"
 $script:EnvAuthUrl      = $null
 $script:EnvironmentLabel= "Commercial (Worldwide)"
-$script:PnPCreds        = $null
 $script:SkipAuditLogInt = $false
 $script:FilesGenerated  = New-Object System.Collections.ArrayList
 
@@ -475,25 +474,23 @@ function Get-DeepPermissions {
         return
     }
 
-    # Prompt for credentials ONCE before the loop starts - no prompts during scanning
-    Write-AuditLog "Enter SharePoint admin credentials for PnP scan." "INFO"
-    Write-AuditLog "You will be prompted ONCE - credentials are reused for all $($filteredSites.Count) sites silently." "INFO"
+    # Uses browser-based login (-UseWebLogin) which supports MFA.
+    # A browser window opens for the first site; subsequent sites in the same tenant
+    # reuse the cached session cookie without prompting again.
+    Write-AuditLog "PnP deep scan uses browser-based authentication (MFA supported)." "INFO"
+    Write-AuditLog "A browser window will open for the first site — subsequent sites reuse the session." "INFO"
 
-    if (-not $script:PnPCreds) {
-        $script:PnPCreds = Get-Credential -Message "PnP Scan - Enter SharePoint admin credentials (used once for all sites)"
-    }
-
-    # Verify credentials work on the first site before proceeding
+    # Verify connection works on the first site before proceeding
     $testSite = $filteredSites | Select-Object -First 1
     try {
-        Connect-PnPOnline -Url $testSite.Url -Credentials $script:PnPCreds `
+        Connect-PnPOnline -Url $testSite.Url -UseWebLogin `
             -AzureEnvironment $script:PnPAzureEnv `
             -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
-        Write-AuditLog "PnP credentials verified. Starting silent scan..." "SUCCESS"
+        Write-AuditLog "PnP connection verified. Starting scan..." "SUCCESS"
     }
     catch {
-        Write-AuditLog "PnP credential test failed - skipping deep scan: $_" "ERROR"
-        Write-AuditLog "Tip: Make sure you're using the full UPN (e.g., admin@contoso.com) and correct password." "WARN"
+        Write-AuditLog "PnP connection test failed - skipping deep scan: $_" "ERROR"
+        Write-AuditLog "Tip: Verify you have access to this site and that MFA authentication completed successfully." "WARN"
         return
     }
 
@@ -511,8 +508,8 @@ function Get-DeepPermissions {
         }
 
         try {
-            # Silently reconnect per site - suppress ALL output to prevent empty prompts
-            Connect-PnPOnline -Url $site.Url -Credentials $script:PnPCreds `
+            # Reconnect per site using cached browser session (no prompt after first login)
+            Connect-PnPOnline -Url $site.Url -UseWebLogin `
                 -AzureEnvironment $script:PnPAzureEnv `
                 -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
 
@@ -988,7 +985,7 @@ function Get-RiskFindings {
     }
 
     # CMMC-specific findings for GCC High tenants
-    if ($script:EnvironmentLabel -match "GCC High") {
+    if ($script:SelectedEnv -eq "GCCHigh") {
         Write-AuditLog "Adding CMMC control mappings for GCC High environment..." "INFO"
 
         if ($TenantSettings) {
@@ -1183,7 +1180,7 @@ function New-HtmlReport {
 
     # CMMC section for GCC High
     $cmmcSection = ""
-    if ($script:EnvironmentLabel -match "GCC High") {
+    if ($script:SelectedEnv -eq "GCCHigh") {
         $cmmcFindings = if ($Findings) { $Findings | Where-Object { $_.Category -match "^CMMC" } } else { @() }
         $cmmcRows = ($cmmcFindings | ForEach-Object {
             $bg = switch ($_.RiskLevel) {
@@ -1398,28 +1395,25 @@ function Main {
 
     Initialize-OutputFolder
 
-    # SPO Connection check
-    Write-AuditLog "Checking SharePoint Online connection ($($script:AdminUrl))..." "INFO"
+    # SPO Connection — always connect fresh to ensure correct tenant and environment endpoint.
+    # Silently clears any stale or wrong-tenant session before connecting.
+    Write-AuditLog "Connecting to SharePoint Online ($($script:AdminUrl))..." "INFO"
+    Write-AuditLog "A browser window will open for authentication." "INFO"
+    try { Disconnect-SPOService -ErrorAction SilentlyContinue } catch { }
     try {
-        Get-SPOTenant -ErrorAction Stop | Out-Null
-        Write-AuditLog "Already connected to SPO." "SUCCESS"
+        if ($script:EnvAuthUrl) {
+            Connect-SPOService -Url $script:AdminUrl -ModernAuth $true `
+                -AuthenticationUrl $script:EnvAuthUrl -ErrorAction Stop
+        }
+        else {
+            Connect-SPOService -Url $script:AdminUrl -ModernAuth $true -ErrorAction Stop
+        }
+        Write-AuditLog "Connected to SharePoint Online." "SUCCESS"
     }
     catch {
-        try {
-            if ($script:EnvAuthUrl) {
-                Connect-SPOService -Url $script:AdminUrl -ModernAuth $true `
-                    -AuthenticationUrl $script:EnvAuthUrl -ErrorAction Stop
-            }
-            else {
-                Connect-SPOService -Url $script:AdminUrl -ModernAuth $true -ErrorAction Stop
-            }
-            Write-AuditLog "Connected to SPO." "SUCCESS"
-        }
-        catch {
-            Write-AuditLog "SPO connection failed: $_" "ERROR"
-            Write-AuditLog "Pre-connect first: Connect-SPOService -Url '$($script:AdminUrl)'" "WARN"
-            return
-        }
+        Write-AuditLog "SharePoint Online connection failed: $_" "ERROR"
+        Write-AuditLog "Verify the tenant name is correct and that you have SharePoint Admin rights." "WARN"
+        return
     }
 
     # Exchange Online connection
