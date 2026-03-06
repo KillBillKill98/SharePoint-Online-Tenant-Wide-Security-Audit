@@ -1358,9 +1358,43 @@ $cmmcSection
 </html>
 "@
 
+    # Save HTML temporarily so a headless browser can load it via file URI
     $htmlPath = Join-Path $ReportFolder "SPO_SecurityAudit_Report.html"
     $html | Out-File -FilePath $htmlPath -Encoding UTF8
-    Write-AuditLog "HTML report saved: $htmlPath" "SUCCESS"
+
+    # Locate Edge or Chrome - both support --print-to-pdf (pre-installed on Windows 10/11)
+    $browserPaths = @(
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+    )
+    $browser = $browserPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($browser) {
+        $pdfPath = Join-Path $ReportFolder "SPO_SecurityAudit_Report.pdf"
+        $fileUri = "file:///" + $htmlPath.Replace('\', '/')
+        $browserArgs = @(
+            "--headless",
+            "--disable-gpu",
+            "--no-margins",
+            "--print-to-pdf=`"$pdfPath`"",
+            "`"$fileUri`""
+        )
+        Write-AuditLog "Converting report to PDF via $(Split-Path $browser -Leaf)..." "INFO"
+        $proc = Start-Process -FilePath $browser -ArgumentList $browserArgs -Wait -PassThru -WindowStyle Hidden
+        if ($proc.ExitCode -eq 0 -and (Test-Path $pdfPath)) {
+            Remove-Item $htmlPath -Force -ErrorAction SilentlyContinue
+            Write-AuditLog "PDF report saved: $pdfPath" "SUCCESS"
+        }
+        else {
+            Write-AuditLog "PDF conversion failed (exit $($proc.ExitCode)) - keeping HTML report." "WARN"
+        }
+    }
+    else {
+        Write-AuditLog "No browser found for PDF conversion - HTML report saved: $htmlPath" "WARN"
+        Write-AuditLog "Install Microsoft Edge or Google Chrome to enable PDF output." "INFO"
+    }
 }
 
 # ============================================================
