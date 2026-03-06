@@ -474,18 +474,24 @@ function Get-DeepPermissions {
         return
     }
 
-    # Uses browser-based login (-UseWebLogin) which supports MFA.
-    # A browser window opens for the first site; subsequent sites in the same tenant
-    # reuse the cached session cookie without prompting again.
+    # Uses browser-based login which supports MFA.
+    # PnP.PowerShell v2+ uses -Interactive (supports -AzureEnvironment).
+    # PnP.PowerShell v1.x uses -UseWebLogin (does NOT support -AzureEnvironment - different parameter set).
+    $pnpHasInteractive = (Get-Command Connect-PnPOnline -ErrorAction SilentlyContinue).Parameters.ContainsKey('Interactive')
     Write-AuditLog "PnP deep scan uses browser-based authentication (MFA supported)." "INFO"
     Write-AuditLog "A browser window will open for the first site  - subsequent sites reuse the session." "INFO"
 
     # Verify connection works on the first site before proceeding
     $testSite = $filteredSites | Select-Object -First 1
     try {
-        Connect-PnPOnline -Url $testSite.Url -UseWebLogin `
-            -AzureEnvironment $script:PnPAzureEnv `
-            -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        if ($pnpHasInteractive) {
+            Connect-PnPOnline -Url $testSite.Url -Interactive `
+                -AzureEnvironment $script:PnPAzureEnv `
+                -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        } else {
+            Connect-PnPOnline -Url $testSite.Url -UseWebLogin `
+                -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        }
         Write-AuditLog "PnP connection verified. Starting scan..." "SUCCESS"
     }
     catch {
@@ -509,9 +515,14 @@ function Get-DeepPermissions {
 
         try {
             # Reconnect per site using cached browser session (no prompt after first login)
-            Connect-PnPOnline -Url $site.Url -UseWebLogin `
-                -AzureEnvironment $script:PnPAzureEnv `
-                -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
+            if ($pnpHasInteractive) {
+                Connect-PnPOnline -Url $site.Url -Interactive `
+                    -AzureEnvironment $script:PnPAzureEnv `
+                    -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
+            } else {
+                Connect-PnPOnline -Url $site.Url -UseWebLogin `
+                    -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
+            }
 
             # Lists and libraries with broken permission inheritance
             $uniqueLists = Get-PnPList -ErrorAction SilentlyContinue -WarningAction SilentlyContinue |
@@ -1232,6 +1243,16 @@ function New-HtmlReport {
     <li>Microsoft Purview Compliance &rarr;&nbsp; <code>https://compliance.microsoft.us</code></li>
     <li>Azure Government / Entra ID &nbsp;&rarr;&nbsp; <code>https://portal.azure.us</code></li>
   </ul>
+  <div style="margin-top:12px;background:#fffbeb;border:1px solid #e0c060;border-radius:4px;padding:10px 14px;">
+    <strong style="color:#5a3700;">PowerShell: How to connect before running Set-SPOTenant commands (GCC High)</strong>
+    <pre style="margin:6px 0;font-family:Consolas,monospace;font-size:12px;background:#ffffff;padding:8px 12px;border-radius:3px;overflow-x:auto;color:#222;white-space:pre-wrap;">Import-Module Microsoft.Online.SharePoint.PowerShell
+Connect-SPOService -Url "$($script:AdminUrl)" ``
+    -ModernAuth `$true ``
+    -AuthenticationUrl "https://login.microsoftonline.us/organizations"
+
+# Then run remediation commands, e.g.:
+Set-SPOTenant -DisallowInfectedFileDownload `$true</pre>
+  </div>
 </div>
 "@
     } else {
@@ -1245,6 +1266,14 @@ function New-HtmlReport {
     <li>Microsoft Purview Compliance &rarr;&nbsp; <code>https://compliance.microsoft.com</code></li>
     <li>Azure Portal / Entra ID &nbsp;&nbsp;&nbsp;&nbsp;&rarr;&nbsp; <code>https://portal.azure.com</code></li>
   </ul>
+  <div style="margin-top:12px;background:#f0f8ff;border:1px solid #b3d4f5;border-radius:4px;padding:10px 14px;">
+    <strong style="color:#0d3674;">PowerShell: How to connect before running Set-SPOTenant commands</strong>
+    <pre style="margin:6px 0;font-family:Consolas,monospace;font-size:12px;background:#ffffff;padding:8px 12px;border-radius:3px;overflow-x:auto;color:#222;white-space:pre-wrap;">Import-Module Microsoft.Online.SharePoint.PowerShell
+Connect-SPOService -Url "$($script:AdminUrl)" -ModernAuth `$true
+
+# Then run remediation commands, e.g.:
+Set-SPOTenant -DisallowInfectedFileDownload `$true</pre>
+  </div>
 </div>
 "@
     }
@@ -1415,6 +1444,7 @@ $cmmcSection
             "--headless",
             "--disable-gpu",
             "--no-margins",
+            "--print-to-pdf-no-header",
             "--print-to-pdf=`"$pdfPath`"",
             "`"$fileUri`""
         )
