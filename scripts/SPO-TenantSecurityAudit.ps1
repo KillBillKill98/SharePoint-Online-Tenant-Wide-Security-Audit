@@ -94,7 +94,7 @@ param(
     [string]$AdminUPN = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputPath = (Get-Location).Path,
+    [string]$OutputPath = (Join-Path (Split-Path -Parent $PSScriptRoot) "reports"),
 
     [Parameter(Mandatory = $false)]
     [int]$AuditDays = 30,
@@ -118,8 +118,8 @@ $ScriptAuthor           = "Luis Z Guzman Garcia (KillBillKill98)"
 $ScriptGitHub           = "https://github.com/KillBillKill98"
 $ScriptVersion          = "3.0"
 $Timestamp              = Get-Date -Format "yyyyMMdd_HHmmss"
-$SafeClientName         = $ClientName -replace '[^a-zA-Z0-9_\-]', '_'
-$ReportFolder           = Join-Path $OutputPath "${SafeClientName}_SPO_Audit_$Timestamp"
+$script:SafeClientName  = ""
+$script:ReportFolder    = ""
 $script:AdminUrl        = ""
 $script:ExoEnvironment  = $null
 $script:IPPSUri         = $null
@@ -147,16 +147,14 @@ function Write-AuditLog {
 }
 
 function Initialize-OutputFolder {
-    if (-not (Test-Path $ReportFolder)) {
-        New-Item -ItemType Directory -Path $ReportFolder | Out-Null
-    }
-    Write-AuditLog "Output folder: $ReportFolder"
+    New-Item -ItemType Directory -Path $script:ReportFolder -Force | Out-Null
+    Write-AuditLog "Output folder: $script:ReportFolder"
 }
 
 function Export-AuditData {
     param([object[]]$Data, [string]$FileName, [string]$Description)
     if ($Data -and $Data.Count -gt 0) {
-        $path = Join-Path $ReportFolder "$FileName.csv"
+        $path = Join-Path $script:ReportFolder "$FileName.csv"
         $Data | Export-Csv -Path $path -NoTypeInformation -Encoding UTF8
         Write-AuditLog ("{0} -- {1} records -> {2}.csv" -f $Description, $Data.Count, $FileName) "SUCCESS"
         [void]$script:FilesGenerated.Add([PSCustomObject]@{
@@ -1425,7 +1423,7 @@ $cmmcSection
 "@
 
     # Save HTML temporarily so a headless browser can load it via file URI
-    $htmlPath = Join-Path $ReportFolder "SPO_SecurityAudit_Report.html"
+    $htmlPath = Join-Path $script:ReportFolder "SPO_SecurityAudit_Report.html"
     $html | Out-File -FilePath $htmlPath -Encoding UTF8
 
     # Locate Edge or Chrome - both support --print-to-pdf (pre-installed on Windows 10/11)
@@ -1438,7 +1436,7 @@ $cmmcSection
     $browser = $browserPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if ($browser) {
-        $pdfPath = Join-Path $ReportFolder "SPO_SecurityAudit_Report.pdf"
+        $pdfPath = Join-Path $script:ReportFolder "SPO_SecurityAudit_Report.pdf"
         $fileUri = "file:///" + $htmlPath.Replace('\', '/')
         $browserArgs = @(
             "--headless",
@@ -1469,17 +1467,23 @@ $cmmcSection
 # ============================================================
 
 function Main {
-    # Prompt for required values not passed as parameters (keeps interactive menu as first visible UX)
-    if (-not $TenantName) {
+    # Resolve required values: use supplied params or prompt interactively until non-empty
+    $resolvedTenant = $TenantName
+    $resolvedClient = $ClientName
+
+    if (-not $resolvedTenant) {
         Write-Host ""
-        $script:TenantName = (Read-Host "  Tenant name (e.g. contoso for contoso.onmicrosoft.com)").Trim()
+        do { $resolvedTenant = (Read-Host "  Tenant name (e.g. contoso for contoso.onmicrosoft.com)").Trim() } while (-not $resolvedTenant)
+        $script:TenantName = $resolvedTenant
     }
-    if (-not $ClientName) {
-        $script:ClientName = (Read-Host "  Client / organization name (used in report)").Trim()
+    if (-not $resolvedClient) {
+        do { $resolvedClient = (Read-Host "  Client / organization name (used in report)").Trim() } while (-not $resolvedClient)
+        $script:ClientName = $resolvedClient
     }
-    # Recompute report folder path now that ClientName is confirmed
-    $script:SafeClientName = $script:ClientName -replace '[^a-zA-Z0-9_\-]', '_'
-    $script:ReportFolder   = Join-Path $OutputPath ("${script:SafeClientName}_SPO_Audit_$Timestamp")
+
+    # Compute report folder with confirmed values (local $resolvedClient avoids scope ambiguity)
+    $script:SafeClientName = $resolvedClient -replace '[^a-zA-Z0-9_\-]', '_'
+    $script:ReportFolder   = Join-Path $OutputPath "$($script:SafeClientName)_SPO_Audit_$Timestamp"
 
     # Environment selection - show menu if not specified via parameter
     if (-not $Environment) {
@@ -1642,7 +1646,7 @@ function Main {
     Write-Host "  AUDIT COMPLETE"                                          -ForegroundColor Green
     Write-Host "  Client      : $ClientName"                               -ForegroundColor Green
     Write-Host "  Environment : $($script:EnvironmentLabel)"               -ForegroundColor Green
-    Write-Host "  Output      : $ReportFolder"                             -ForegroundColor Green
+    Write-Host "  Output      : $script:ReportFolder"                      -ForegroundColor Green
     Write-Host "========================================================" -ForegroundColor Green
 
     $high = if ($findings) { ($findings | Where-Object { $_.RiskLevel -eq "High"   }).Count } else { 0 }
