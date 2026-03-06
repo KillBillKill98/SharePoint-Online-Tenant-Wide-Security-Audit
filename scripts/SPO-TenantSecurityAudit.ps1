@@ -84,11 +84,11 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$TenantName,
+    [Parameter(Mandatory = $false)]
+    [string]$TenantName = "",
 
-    [Parameter(Mandatory = $true)]
-    [string]$ClientName,
+    [Parameter(Mandatory = $false)]
+    [string]$ClientName = "",
 
     [Parameter(Mandatory = $false)]
     [string]$AdminUPN = "",
@@ -474,18 +474,24 @@ function Get-DeepPermissions {
         return
     }
 
-    # Uses browser-based login (-UseWebLogin) which supports MFA.
-    # A browser window opens for the first site; subsequent sites in the same tenant
-    # reuse the cached session cookie without prompting again.
+    # Uses browser-based login which supports MFA.
+    # PnP.PowerShell v2+ uses -Interactive (supports -AzureEnvironment).
+    # PnP.PowerShell v1.x uses -UseWebLogin (does NOT support -AzureEnvironment - different parameter set).
+    $pnpHasInteractive = (Get-Command Connect-PnPOnline -ErrorAction SilentlyContinue).Parameters.ContainsKey('Interactive')
     Write-AuditLog "PnP deep scan uses browser-based authentication (MFA supported)." "INFO"
-    Write-AuditLog "A browser window will open for the first site — subsequent sites reuse the session." "INFO"
+    Write-AuditLog "A browser window will open for the first site  - subsequent sites reuse the session." "INFO"
 
     # Verify connection works on the first site before proceeding
     $testSite = $filteredSites | Select-Object -First 1
     try {
-        Connect-PnPOnline -Url $testSite.Url -UseWebLogin `
-            -AzureEnvironment $script:PnPAzureEnv `
-            -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        if ($pnpHasInteractive) {
+            Connect-PnPOnline -Url $testSite.Url -Interactive `
+                -AzureEnvironment $script:PnPAzureEnv `
+                -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        } else {
+            Connect-PnPOnline -Url $testSite.Url -UseWebLogin `
+                -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+        }
         Write-AuditLog "PnP connection verified. Starting scan..." "SUCCESS"
     }
     catch {
@@ -509,9 +515,14 @@ function Get-DeepPermissions {
 
         try {
             # Reconnect per site using cached browser session (no prompt after first login)
-            Connect-PnPOnline -Url $site.Url -UseWebLogin `
-                -AzureEnvironment $script:PnPAzureEnv `
-                -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
+            if ($pnpHasInteractive) {
+                Connect-PnPOnline -Url $site.Url -Interactive `
+                    -AzureEnvironment $script:PnPAzureEnv `
+                    -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
+            } else {
+                Connect-PnPOnline -Url $site.Url -UseWebLogin `
+                    -ErrorAction Stop -WarningAction SilentlyContinue 2>$null | Out-Null
+            }
 
             # Lists and libraries with broken permission inheritance
             $uniqueLists = Get-PnPList -ErrorAction SilentlyContinue -WarningAction SilentlyContinue |
@@ -548,7 +559,7 @@ function Get-DeepPermissions {
                             FindingType   = "Everyone Account in Group"
                             ListUrl       = "N/A"
                             ItemCount     = "N/A"
-                            Note          = "Member: $($m.Title) | $($m.LoginName) - REVIEW REQUIRED"
+                            Note          = ("Member: " + $m.Title + " | " + $m.LoginName + " - REVIEW REQUIRED")
                         })
                     }
                 }
@@ -859,6 +870,12 @@ function Get-RiskFindings {
 
     $findings = New-Object System.Collections.ArrayList
 
+    # Environment-specific portal URLs for remediation guidance
+    $spoAdmin    = $script:AdminUrl   # .sharepoint.us (GCCHigh) or .sharepoint.com (Commercial/GCC)
+    $azurePortal = if ($script:SelectedEnv -eq "GCCHigh") { "portal.azure.us" }         else { "portal.azure.com" }
+    $purview     = if ($script:SelectedEnv -eq "GCCHigh") { "compliance.microsoft.us" } else { "compliance.microsoft.com" }
+    $m365Admin   = if ($script:SelectedEnv -eq "GCCHigh") { "admin.microsoft.us" }       else { "admin.microsoft.com" }
+
     function Add-Finding {
         param([string]$Cat, [string]$Risk, [string]$Finding, [string]$Detail, [string]$Fix)
         [void]$findings.Add([PSCustomObject]@{
@@ -876,7 +893,7 @@ function Get-RiskFindings {
             Add-Finding "External Sharing" "High" `
                 "Tenant allows anonymous Anyone links" `
                 "SharingCapability = ExternalUserAndGuestSharing" `
-                "Set to New and existing guests or lower in SPO Admin > Policies > Sharing"
+                "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, set to New and existing guests or lower"
         }
         elseif ($sc -eq "ExternalUserSharingOnly") {
             Add-Finding "External Sharing" "Medium" `
@@ -889,42 +906,42 @@ function Get-RiskFindings {
             Add-Finding "Authentication" "High" `
                 "Legacy authentication protocols are enabled" `
                 "LegacyAuthProtocolsEnabled = True" `
-                "Disable legacy auth in SPO Admin > Access Control"
+                "In SharePoint Admin Center ($spoAdmin) > Access Control, disable legacy authentication"
         }
 
         if ($TenantSettings.EmailAttestationRequired -eq $false) {
             Add-Finding "Guest Access" "Medium" `
                 "Email attestation not required for anonymous link recipients" `
                 "EmailAttestationRequired = False" `
-                "Enable in SPO Admin > Sharing settings"
+                "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, enable email attestation"
         }
 
         if ($TenantSettings.ExternalUserExpirationRequired -eq $false) {
             Add-Finding "Guest Access" "Medium" `
                 "No expiration set for external/guest users" `
                 "ExternalUserExpirationRequired = False" `
-                "Enable guest expiration in SPO Admin > Sharing"
+                "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, enable guest expiration"
         }
 
         if ($TenantSettings.PreventExternalUsersFromResharing -eq $false) {
             Add-Finding "External Sharing" "Medium" `
                 "External users can reshare content they do not own" `
                 "PreventExternalUsersFromResharing = False" `
-                "Enable Prevent external users from resharing in SPO Admin"
+                "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, enable Prevent external users from resharing"
         }
 
         if ($TenantSettings.ConditionalAccessPolicy -eq "AllowFullAccess") {
             Add-Finding "Access Control" "High" `
                 "No conditional access policy restricts SharePoint access" `
                 "ConditionalAccessPolicy = AllowFullAccess" `
-                "Apply limited web-only access for unmanaged devices at minimum"
+                "In SharePoint Admin Center ($spoAdmin) > Access Control > Unmanaged devices, apply limited or blocked access. Configure device policy in $azurePortal > Entra ID > Conditional Access"
         }
 
         if ($TenantSettings.DefaultSharingLinkType -eq "AnonymousAccess") {
             Add-Finding "External Sharing" "High" `
                 "Default sharing link type is Anyone (anonymous)" `
                 "DefaultSharingLinkType = AnonymousAccess" `
-                "Change to Specific people or Only people in your organization"
+                "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, change default link type to Specific people or Only people in your organization"
         }
 
         if ($TenantSettings.OneDriveForGuestsEnabled -eq $true) {
@@ -940,7 +957,7 @@ function Get-RiskFindings {
         Add-Finding "Malware Protection" "High" `
             "SharePoint built-in virus protection is NOT blocking infected file downloads" `
             "DisallowInfectedFileDownload = False. Users can download files flagged as infected." `
-            "Run: Set-SPOTenant -DisallowInfectedFileDownload `$true in SharePoint Online PowerShell"
+            "Run: Set-SPOTenant -DisallowInfectedFileDownload `$true (connect to $spoAdmin endpoint before running)"
     }
     elseif ($VirusProtection -and $VirusProtection.DisallowInfectedFileDownload -eq $true) {
         Add-Finding "Malware Protection" "Good" `
@@ -955,7 +972,7 @@ function Get-RiskFindings {
             Add-Finding "Site Permissions" "High" `
                 "$($anonSites.Count) of $($Sites.Count) sites allow anonymous Anyone sharing" `
                 "These sites permit unauthenticated access and are a critical Copilot oversharing risk" `
-                "Review each site in SPO Admin > Sites > Active Sites and restrict sharing"
+                "In SharePoint Admin Center ($spoAdmin) > Sites > Active Sites, review and restrict per-site sharing settings"
         }
     }
 
@@ -994,7 +1011,7 @@ function Get-RiskFindings {
                 Add-Finding "CMMC - AC.1.001" "High" `
                     "External sharing enabled - may violate CMMC AC.1.001 (Limit system access to authorized users)" `
                     "SharingCapability = $sc. CMMC requires limiting CUI access to authorized users only." `
-                    "Set SharingCapability to Disabled or ExistingExternalUserSharingOnly and document exceptions"
+                    "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, set SharingCapability to Disabled or ExistingExternalUserSharingOnly and document exceptions"
             }
             else {
                 Add-Finding "CMMC - AC.1.001" "Good" `
@@ -1007,20 +1024,20 @@ function Get-RiskFindings {
                 Add-Finding "CMMC - AC.2.006" "Medium" `
                     "No guest expiration - review against CMMC AC.2.006 (Limit use of portable storage devices)" `
                     "ExternalUserExpirationRequired = False. Persistent guest accounts increase CUI exposure." `
-                    "Enable ExternalUserExpirationRequired and set ExternalUserExpireInDays to 30 or fewer"
+                    "In SharePoint Admin Center ($spoAdmin) > Policies > Sharing, enable ExternalUserExpirationRequired and set ExternalUserExpireInDays to 30 or fewer"
             }
 
             if ($TenantSettings.ConditionalAccessPolicy -eq "AllowFullAccess") {
                 Add-Finding "CMMC - SI.1.210" "High" `
                     "No device-based conditional access - may not satisfy CMMC SI.1.210 (Identify and manage information system flaws)" `
                     "ConditionalAccessPolicy = AllowFullAccess. Unmanaged devices can access CUI." `
-                    "Apply LimitedAccess or BlockAccess for unmanaged devices via Entra ID Conditional Access"
+                    "In Azure Government portal ($azurePortal) > Microsoft Entra ID > Security > Conditional Access, apply LimitedAccess or BlockAccess policy for unmanaged devices"
             }
             else {
                 Add-Finding "CMMC - SI.1.210" "Good" `
                     "Conditional access policy restricts unmanaged device access - supports CMMC SI.1.210" `
                     "ConditionalAccessPolicy = $($TenantSettings.ConditionalAccessPolicy)" `
-                    "Verify policy also applies to all CUI-containing site collections."
+                    "Verify policy also applies to all CUI-containing site collections in $spoAdmin"
             }
         }
 
@@ -1029,7 +1046,7 @@ function Get-RiskFindings {
                 Add-Finding "CMMC - SC.3.177" "High" `
                     "Malware protection disabled - fails CMMC SC.3.177 (Employ cryptographic mechanisms to protect CUI)" `
                     "DisallowInfectedFileDownload = False. Infected files are not blocked." `
-                    "Run: Set-SPOTenant -DisallowInfectedFileDownload `$true"
+                    "Run: Set-SPOTenant -DisallowInfectedFileDownload `$true (connect to $spoAdmin endpoint before running)"
             }
             else {
                 Add-Finding "CMMC - SC.3.177" "Good" `
@@ -1042,7 +1059,7 @@ function Get-RiskFindings {
         Add-Finding "CMMC - AU.2.041" "Info" `
             "Verify Unified Audit Log retention meets CMMC AU.2.041 (Create and retain system audit logs)" `
             "CMMC requires audit logs to be retained for a minimum period (typically 90 days online, 1 year archived)." `
-            "In Microsoft Purview Compliance Portal, configure Audit Log retention policies to meet your CMMC assessment requirements"
+            "In Microsoft Purview Compliance portal ($purview) > Audit > Retention policies, configure log retention to meet CMMC AU.2.041 (90 days online, 1 year archived)"
     }
 
     Export-AuditData -Data $findings -FileName "10_RiskFindings" -Description "Risk findings"
@@ -1201,7 +1218,7 @@ function New-HtmlReport {
   <section style="border-left:4px solid #7B2D8B;">
     <h2 style="color:#7B2D8B;">CMMC Control Mapping (GCC High / IL4-IL5)</h2>
     <div style="background:#f9f0ff;border-left:4px solid #7B2D8B;padding:12px 16px;margin-bottom:16px;font-size:13px;border-radius:4px;line-height:1.6;">
-      <strong>Cybersecurity Maturity Model Certification (CMMC)</strong> — This section maps SharePoint Online
+      <strong>Cybersecurity Maturity Model Certification (CMMC)</strong>  - This section maps SharePoint Online
       security findings to relevant CMMC practice IDs for GCC High tenants handling Controlled Unclassified Information (CUI).
       Findings are derived from the same audit data collected above and are provided for assessment planning purposes.
     </div>
@@ -1210,6 +1227,54 @@ function New-HtmlReport {
       <tbody>$cmmcRows</tbody>
     </table>
   </section>
+"@
+    }
+
+    # Environment-specific remediation callout box for the HTML report
+    if ($script:SelectedEnv -eq "GCCHigh") {
+        $envCallout = @"
+<div style="background:#fff3cd;border-left:5px solid #e6a817;padding:14px 18px;margin-bottom:18px;border-radius:4px;font-size:13px;line-height:1.7;">
+  <strong style="font-size:14px;color:#7a4f00;">WARNING: GCC High Tenant - Use GCC High-Specific Portals for ALL Remediation Steps</strong>
+  <p style="margin:6px 0 4px 0;color:#5a3700;">This report was generated for a <strong>GCC High (IL4/IL5)</strong> tenant. All remediation steps below reference GCC High government portals.
+  <strong>Do NOT use commercial (.com) portals</strong> to make changes in this tenant - they connect to a completely different environment and changes will NOT apply to this tenant.</p>
+  <ul style="margin:4px 0;padding-left:20px;color:#5a3700;">
+    <li>SharePoint Admin Center &nbsp;&rarr;&nbsp; <code>$($script:AdminUrl)</code></li>
+    <li>Microsoft 365 Admin Center &nbsp;&rarr;&nbsp; <code>https://admin.microsoft.us</code></li>
+    <li>Microsoft Purview Compliance &rarr;&nbsp; <code>https://compliance.microsoft.us</code></li>
+    <li>Azure Government / Entra ID &nbsp;&rarr;&nbsp; <code>https://portal.azure.us</code></li>
+  </ul>
+  <div style="margin-top:12px;background:#fffbeb;border:1px solid #e0c060;border-radius:4px;padding:10px 14px;">
+    <strong style="color:#5a3700;">PowerShell: How to connect before running Set-SPOTenant commands (GCC High)</strong>
+    <pre style="margin:6px 0;font-family:Consolas,monospace;font-size:12px;background:#ffffff;padding:8px 12px;border-radius:3px;overflow-x:auto;color:#222;white-space:pre-wrap;">Import-Module Microsoft.Online.SharePoint.PowerShell
+Connect-SPOService -Url "$($script:AdminUrl)" ``
+    -ModernAuth `$true ``
+    -AuthenticationUrl "https://login.microsoftonline.us/organizations"
+
+# Then run remediation commands, e.g.:
+Set-SPOTenant -DisallowInfectedFileDownload `$true</pre>
+  </div>
+</div>
+"@
+    } else {
+        $envLabel2 = if ($script:SelectedEnv -eq "GCC") { "GCC (US Government Community Cloud)" } else { "Commercial (Worldwide)" }
+        $envCallout = @"
+<div style="background:#e3f2fd;border-left:5px solid #1976D2;padding:14px 18px;margin-bottom:18px;border-radius:4px;font-size:13px;line-height:1.7;">
+  <strong style="font-size:14px;color:#0d47a1;">INFO: $envLabel2 - Standard Microsoft 365 Portals for Remediation</strong>
+  <ul style="margin:6px 0;padding-left:20px;color:#0d3674;">
+    <li>SharePoint Admin Center &nbsp;&rarr;&nbsp; <code>$($script:AdminUrl)</code></li>
+    <li>Microsoft 365 Admin Center &nbsp;&rarr;&nbsp; <code>https://admin.microsoft.com</code></li>
+    <li>Microsoft Purview Compliance &rarr;&nbsp; <code>https://compliance.microsoft.com</code></li>
+    <li>Azure Portal / Entra ID &nbsp;&nbsp;&nbsp;&nbsp;&rarr;&nbsp; <code>https://portal.azure.com</code></li>
+  </ul>
+  <div style="margin-top:12px;background:#f0f8ff;border:1px solid #b3d4f5;border-radius:4px;padding:10px 14px;">
+    <strong style="color:#0d3674;">PowerShell: How to connect before running Set-SPOTenant commands</strong>
+    <pre style="margin:6px 0;font-family:Consolas,monospace;font-size:12px;background:#ffffff;padding:8px 12px;border-radius:3px;overflow-x:auto;color:#222;white-space:pre-wrap;">Import-Module Microsoft.Online.SharePoint.PowerShell
+Connect-SPOService -Url "$($script:AdminUrl)" -ModernAuth `$true
+
+# Then run remediation commands, e.g.:
+Set-SPOTenant -DisallowInfectedFileDownload `$true</pre>
+  </div>
+</div>
 "@
     }
 
@@ -1274,6 +1339,7 @@ function New-HtmlReport {
   <!-- Risk Findings -->
   <section>
     <h2>Risk Findings</h2>
+    $envCallout
     <table>
       <thead><tr><th>Category</th><th>Risk</th><th>Finding</th><th>Remediation</th></tr></thead>
       <tbody>$findingRows</tbody>
@@ -1358,9 +1424,44 @@ $cmmcSection
 </html>
 "@
 
+    # Save HTML temporarily so a headless browser can load it via file URI
     $htmlPath = Join-Path $ReportFolder "SPO_SecurityAudit_Report.html"
     $html | Out-File -FilePath $htmlPath -Encoding UTF8
-    Write-AuditLog "HTML report saved: $htmlPath" "SUCCESS"
+
+    # Locate Edge or Chrome - both support --print-to-pdf (pre-installed on Windows 10/11)
+    $browserPaths = @(
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+    )
+    $browser = $browserPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($browser) {
+        $pdfPath = Join-Path $ReportFolder "SPO_SecurityAudit_Report.pdf"
+        $fileUri = "file:///" + $htmlPath.Replace('\', '/')
+        $browserArgs = @(
+            "--headless",
+            "--disable-gpu",
+            "--no-margins",
+            "--print-to-pdf-no-header",
+            "--print-to-pdf=`"$pdfPath`"",
+            "`"$fileUri`""
+        )
+        Write-AuditLog "Converting report to PDF via $(Split-Path $browser -Leaf)..." "INFO"
+        $proc = Start-Process -FilePath $browser -ArgumentList $browserArgs -Wait -PassThru -WindowStyle Hidden
+        if ($proc.ExitCode -eq 0 -and (Test-Path $pdfPath)) {
+            Remove-Item $htmlPath -Force -ErrorAction SilentlyContinue
+            Write-AuditLog "PDF report saved: $pdfPath" "SUCCESS"
+        }
+        else {
+            Write-AuditLog "PDF conversion failed (exit $($proc.ExitCode)) - keeping HTML report." "WARN"
+        }
+    }
+    else {
+        Write-AuditLog "No browser found for PDF conversion - HTML report saved: $htmlPath" "WARN"
+        Write-AuditLog "Install Microsoft Edge or Google Chrome to enable PDF output." "INFO"
+    }
 }
 
 # ============================================================
@@ -1368,6 +1469,18 @@ $cmmcSection
 # ============================================================
 
 function Main {
+    # Prompt for required values not passed as parameters (keeps interactive menu as first visible UX)
+    if (-not $TenantName) {
+        Write-Host ""
+        $script:TenantName = (Read-Host "  Tenant name (e.g. contoso for contoso.onmicrosoft.com)").Trim()
+    }
+    if (-not $ClientName) {
+        $script:ClientName = (Read-Host "  Client / organization name (used in report)").Trim()
+    }
+    # Recompute report folder path now that ClientName is confirmed
+    $script:SafeClientName = $script:ClientName -replace '[^a-zA-Z0-9_\-]', '_'
+    $script:ReportFolder   = Join-Path $OutputPath ("${script:SafeClientName}_SPO_Audit_$Timestamp")
+
     # Environment selection - show menu if not specified via parameter
     if (-not $Environment) {
         $script:SelectedEnv = Show-EnvironmentMenu
@@ -1395,7 +1508,7 @@ function Main {
 
     Initialize-OutputFolder
 
-    # SPO Connection — always connect fresh to ensure correct tenant and environment endpoint.
+    # SPO Connection  - always connect fresh to ensure correct tenant and environment endpoint.
     # Silently clears any stale or wrong-tenant session before connecting.
     Write-AuditLog "Connecting to SharePoint Online ($($script:AdminUrl))..." "INFO"
     Write-AuditLog "A browser window will open for authentication." "INFO"
