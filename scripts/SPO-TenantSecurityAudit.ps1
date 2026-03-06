@@ -478,7 +478,7 @@ function Get-DeepPermissions {
     # A browser window opens for the first site; subsequent sites in the same tenant
     # reuse the cached session cookie without prompting again.
     Write-AuditLog "PnP deep scan uses browser-based authentication (MFA supported)." "INFO"
-    Write-AuditLog "A browser window will open for the first site — subsequent sites reuse the session." "INFO"
+    Write-AuditLog "A browser window will open for the first site  - subsequent sites reuse the session." "INFO"
 
     # Verify connection works on the first site before proceeding
     $testSite = $filteredSites | Select-Object -First 1
@@ -1201,7 +1201,7 @@ function New-HtmlReport {
   <section style="border-left:4px solid #7B2D8B;">
     <h2 style="color:#7B2D8B;">CMMC Control Mapping (GCC High / IL4-IL5)</h2>
     <div style="background:#f9f0ff;border-left:4px solid #7B2D8B;padding:12px 16px;margin-bottom:16px;font-size:13px;border-radius:4px;line-height:1.6;">
-      <strong>Cybersecurity Maturity Model Certification (CMMC)</strong> — This section maps SharePoint Online
+      <strong>Cybersecurity Maturity Model Certification (CMMC)</strong>  - This section maps SharePoint Online
       security findings to relevant CMMC practice IDs for GCC High tenants handling Controlled Unclassified Information (CUI).
       Findings are derived from the same audit data collected above and are provided for assessment planning purposes.
     </div>
@@ -1395,7 +1395,7 @@ function Main {
 
     Initialize-OutputFolder
 
-    # SPO Connection — always connect fresh to ensure correct tenant and environment endpoint.
+    # SPO Connection  - always connect fresh to ensure correct tenant and environment endpoint.
     # Silently clears any stale or wrong-tenant session before connecting.
     Write-AuditLog "Connecting to SharePoint Online ($($script:AdminUrl))..." "INFO"
     Write-AuditLog "A browser window will open for authentication." "INFO"
